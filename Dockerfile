@@ -1,21 +1,26 @@
-# Bước 1: Chọn một image nền Python gọn nhẹ và hiệu quả.
-FROM python:3.11-slim
+# Dockerfile
 
-# Bước 2: Đặt thư mục làm việc bên trong container.
+# Bước 1-2 không đổi
+FROM python:3.11-slim
 WORKDIR /code
 
-# Bước 3: Sao chép file requirements.txt vào trước để tận dụng caching.
+# Bước 3-4 không đổi
 COPY requirements.txt .
-
-# Bước 4: Cài đặt các thư viện Python.
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Bước 5: Sao chép mã nguồn ứng dụng vào thư mục làm việc trong container.
+# --- THAY ĐỔI: Thêm entrypoint script vào image ---
+# Sao chép entrypoint script vào container
+COPY entrypoint.sh .
+# Cấp quyền thực thi cho script
+RUN chmod +x /code/entrypoint.sh
+
+# Bước 5 không đổi
 COPY ./app /code/app
 
-# Bước 6: Mở cổng mặc định là 8000.
+# Bước 6 không đổi
 EXPOSE 8000
 
-# Bước 7: Lệnh để chạy ứng dụng khi container khởi động.
-# Sử dụng biến môi trường ${PORT} hoặc mặc định là 8000.
-CMD sh -c 'uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'
+# --- THAY ĐỔI: Sử dụng ENTRYPOINT thay vì CMD ---
+# Chỉ định entrypoint script làm lệnh khởi động chính của container.
+# Lệnh CMD cũ đã được thay thế hoàn toàn.
+ENTRYPOINT ["/code/entrypoint.sh"]
