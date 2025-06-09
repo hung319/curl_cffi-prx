@@ -1,10 +1,8 @@
-# app/main.py
-
 import os
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
-from curl_cffi.requests import AsyncSession, RequestsError
+from curl_cffi.requests import AsyncSession, RequestsError # Đảm bảo đã import AsyncSession
 from typing import Optional
 
 # Ghi lại thời gian khởi động của server
@@ -31,7 +29,6 @@ else:
 if not SECRET_KEY:
     raise ValueError("Biến môi trường API_KEY chưa được thiết lập.")
 
-# --- THAY ĐỔI: Khởi tạo FastAPI và tắt hoàn toàn các trang tài liệu ---
 app = FastAPI(
     title="Minimal Fetcher API",
     description="API tối giản, không có trang tài liệu và tự động tương thích với health check.",
@@ -40,7 +37,10 @@ app = FastAPI(
     openapi_url=None
 )
 
-# --- THAY ĐỔI: Biến endpoint /status thành endpoint gốc / ---
+# --- SỬA LỖI: Thêm lại dòng định nghĩa session đã bị thiếu ---
+session = AsyncSession(impersonate="chrome120", timeout=45)
+
+
 @app.get("/", tags=["Health Check"])
 async def get_root_health_check():
     """
@@ -58,7 +58,6 @@ async def get_root_health_check():
         "proxy": proxy_status
     }
 
-# --- THAY ĐỔI: Chuyển chức năng chính sang endpoint /api ---
 @app.get("/api", tags=["Main API"])
 async def fetch_url_api(
     key: str = Query(..., description="API Key để xác thực."),
@@ -76,6 +75,7 @@ async def fetch_url_api(
     if final_proxy_url:
         request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     try:
+        # Dòng này sẽ không còn lỗi nữa vì biến 'session' đã được định nghĩa
         response = await session.get(url, **request_kwargs)
         response.raise_for_status()
         return response.text
@@ -86,4 +86,5 @@ async def fetch_url_api(
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    # Dòng này cũng sẽ không còn lỗi
     await session.close()
