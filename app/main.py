@@ -1,3 +1,5 @@
+# app/main.py
+
 import os
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
@@ -14,7 +16,7 @@ IP_SOCKS = os.getenv("IPSOCKS")
 USER_SOCKS = os.getenv("USERSOCKS")
 PASS_SOCKS = os.getenv("PASSSOCKS")
 
-# Xây dựng chuỗi proxy URL một lần duy nhất khi khởi động
+# Xây dựng chuỗi proxy URL
 final_proxy_url = None
 if IP_SOCKS:
     proxy_scheme = "socks5h" 
@@ -29,24 +31,26 @@ else:
 if not SECRET_KEY:
     raise ValueError("Biến môi trường API_KEY chưa được thiết lập.")
 
+# --- THAY ĐỔI: Khởi tạo FastAPI và tắt hoàn toàn các trang tài liệu ---
 app = FastAPI(
-    title="Server-Configured Fetcher API",
-    description="API được cấu hình proxy hoàn toàn ở phía máy chủ qua biến môi trường."
+    title="Minimal Fetcher API",
+    description="API tối giản, không có trang tài liệu và tự động tương thích với health check.",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
 )
 
-@app.get("/status", tags=["Server Status"])
-async def get_server_status():
+# --- THAY ĐỔI: Biến endpoint /status thành endpoint gốc / ---
+@app.get("/", tags=["Health Check"])
+async def get_root_health_check():
     """
-    Cung cấp thông tin trạng thái và cấu hình hiện tại của server.
+    Cung cấp thông tin trạng thái. Đây là endpoint công khai cho health check.
     """
     uptime = datetime.now(timezone.utc) - start_time
     proxy_status = {
-        "configured": False,
-        "details": "API is running in direct mode."
+        "configured": bool(final_proxy_url),
+        "details": f"Using proxy configured at {IP_SOCKS}" if final_proxy_url else "API is running in direct mode."
     }
-    if final_proxy_url:
-        proxy_status["configured"] = True
-        proxy_status["details"] = f"Using proxy configured at {IP_SOCKS}"
     return {
         "status": "active",
         "server_time_utc": datetime.now(timezone.utc).isoformat(),
@@ -54,8 +58,9 @@ async def get_server_status():
         "proxy": proxy_status
     }
 
-@app.get("/", tags=["Main API"])
-async def fetch_url(
+# --- THAY ĐỔI: Chuyển chức năng chính sang endpoint /api ---
+@app.get("/api", tags=["Main API"])
+async def fetch_url_api(
     key: str = Query(..., description="API Key để xác thực."),
     url: str = Query(..., description="URL của trang web bạn muốn lấy nội dung."),
     referer: Optional[str] = Query(None, description="URL referer để gửi trong request header.")
