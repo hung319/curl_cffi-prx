@@ -1,8 +1,10 @@
+# app/main.py
+
 import os
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
-from curl_cffi.requests import AsyncSession, RequestsError # Đảm bảo đã import AsyncSession
+from curl_cffi.requests import AsyncSession, RequestsError
 from typing import Optional
 
 # Ghi lại thời gian khởi động của server
@@ -29,17 +31,20 @@ else:
 if not SECRET_KEY:
     raise ValueError("Biến môi trường API_KEY chưa được thiết lập.")
 
+
+# --- THAY ĐỔI: Khởi tạo FastAPI và bật lại các trang tài liệu ---
+# Chúng ta xóa các tham số docs_url=None, redoc_url=None
+# và khai báo tường minh để đảm bảo chúng hoạt động tốt trên Render.
 app = FastAPI(
-    title="Minimal Fetcher API",
-    description="API tối giản, không có trang tài liệu và tự động tương thích với health check.",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None
+    title="Fetcher API with Docs",
+    description="API để fetch URL, hỗ trợ health check và có tài liệu tự động.",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
 
-# --- SỬA LỖI: Thêm lại dòng định nghĩa session đã bị thiếu ---
-session = AsyncSession(impersonate="chrome120", timeout=45)
 
+session = AsyncSession(impersonate="chrome120", timeout=45)
 
 @app.get("/", tags=["Health Check"])
 async def get_root_health_check():
@@ -75,7 +80,6 @@ async def fetch_url_api(
     if final_proxy_url:
         request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     try:
-        # Dòng này sẽ không còn lỗi nữa vì biến 'session' đã được định nghĩa
         response = await session.get(url, **request_kwargs)
         response.raise_for_status()
         return response.text
@@ -86,5 +90,4 @@ async def fetch_url_api(
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    # Dòng này cũng sẽ không còn lỗi
     await session.close()
