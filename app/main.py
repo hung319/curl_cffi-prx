@@ -3,11 +3,11 @@
 import os
 import json
 from datetime import datetime, timezone
-from urllib.parse import urlparse # <<< THÊM MỚI
+from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, Dict
-from fastapi.responses import StreamingResponse # <<< THÊM MỚI
+from fastapi.responses import StreamingResponse
 from curl_cffi.requests import AsyncSession, RequestsError
 
 
@@ -53,6 +53,37 @@ async def get_root_health_check():
     proxy_status = { "configured": bool(final_proxy_url), "details": f"Using proxy configured at {IP_SOCKS}" if final_proxy_url else "API is running in direct mode." }
     return { "status": "active", "server_time_utc": datetime.now(timezone.utc).isoformat(), "uptime_seconds": uptime.total_seconds(), "proxy": proxy_status }
 
+async def process_and_stream_response(response, url):
+    """Hàm trợ giúp để xử lý và tạo response trả về."""
+    response.raise_for_status()
+
+    # 1. Lấy các headers gốc từ server mục tiêu
+    original_headers = response.headers
+    
+    # 2. Chuẩn bị các headers để gửi về cho client
+    # Bắt đầu với Content-Type, header quan trọng nhất để trình duyệt biết loại nội dung
+    proxy_response_headers = {
+        "Content-Type": original_headers.get("Content-Type", "application/octet-stream")
+    }
+
+    # --- THAY ĐỔI LỚN: Logic "thông minh" ---
+    # 3. Kiểm tra xem server gốc có yêu cầu tải xuống không, nếu có thì sao chép hành vi đó
+    original_content_disposition = original_headers.get("Content-Disposition")
+    if original_content_disposition:
+        proxy_response_headers["Content-Disposition"] = original_content_disposition
+    # Nếu không, chúng ta không làm gì cả, để trình duyệt tự quyết định (thường là hiển thị inline)
+    # ------------------------------------
+
+    # 4. Sao chép Content-Length nếu có, giúp trình duyệt biết tiến trình tải
+    if "Content-Length" in original_headers:
+        proxy_response_headers["Content-Length"] = original_headers["Content-Length"]
+
+    return StreamingResponse(
+        response.iter_content(chunk_size=65536),
+        status_code=response.status_code,
+        headers=proxy_response_headers
+    )
+
 @app.get("/api", tags=["GET Method"])
 async def fetch_url_get_api(
     key: str = Query(...,),
@@ -60,10 +91,9 @@ async def fetch_url_get_api(
     referer: Optional[str] = Query(None),
     custom_headers: Optional[str] = Query(None)
 ):
-    if key != SECRET_KEY:
-        raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
-    if not url.startswith("http://") and not url.startswith("https://"):
-        raise HTTPException(status_code=400, detail="URL không hợp lệ.")
+    if key != SECRET_KEY: raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
+    if not url.startswith("http://") and not url.startswith("https://"): raise HTTPException(status_code=400, detail="URL không hợp lệ.")
+    
     headers = {}
     if custom_headers:
         try:
@@ -73,37 +103,13 @@ async def fetch_url_get_api(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Giá trị của custom_headers không phải là một chuỗi JSON hợp lệ.")
     if referer: headers["Referer"] = referer
+    
     request_kwargs = {"headers": headers}
     if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     
     try:
-        response = await session.get(url, **request_kwargs, stream=True) # <<< THÊM stream=True
-        response.raise_for_status()
-
-        # --- THAY ĐỔI LỚN: Xử lý và trả về file để tải xuống ---
-        # 1. Lấy Content-Type gốc, nếu không có thì mặc định là file nhị phân
-        content_type = response.headers.get("Content-Type", "application/octet-stream")
-
-        # 2. Tạo tên file từ URL
-        try:
-            filename = os.path.basename(urlparse(url).path) or "downloaded_file"
-        except Exception:
-            filename = "downloaded_file"
-            
-        # 3. Tạo header 'Content-Disposition' để buộc trình duyệt tải xuống
-        download_headers = {
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
-
-        # 4. Trả về một StreamingResponse
-        return StreamingResponse(
-            response.iter_content(chunk_size=65536),
-            status_code=response.status_code,
-            headers=download_headers,
-            media_type=content_type
-        )
-        # -----------------------------------------
-
+        response = await session.get(url, **request_kwargs, stream=True)
+        return await process_and_stream_response(response, url) # Sử dụng hàm trợ giúp
     except RequestsError as exc:
         raise HTTPException(status_code=502, detail=f"Lỗi khi yêu cầu đến URL mục tiêu: {exc}")
     except Exception as exc:
@@ -111,33 +117,17 @@ async def fetch_url_get_api(
 
 @app.post("/api", tags=["POST Method"])
 async def fetch_url_post_api(request: PostRequest):
-    if request.key != SECRET_KEY:
-        raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
+    if request.key != SECRET_KEY: raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
+    
     headers = request.custom_headers or {}
     if request.referer: headers["Referer"] = request.referer
+    
     request_kwargs = {"headers": headers, "data": request.data}
     if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     
     try:
-        response = await session.post(request.url, **request_kwargs, stream=True) # <<< THÊM stream=True
-        response.raise_for_status()
-
-        # --- THAY ĐỔI LỚN: Logic tương tự như endpoint GET ---
-        content_type = response.headers.get("Content-Type", "application/octet-stream")
-        try:
-            filename = os.path.basename(urlparse(request.url).path) or "downloaded_file"
-        except Exception:
-            filename = "downloaded_file"
-        download_headers = { "Content-Disposition": f'attachment; filename="{filename}"' }
-
-        return StreamingResponse(
-            response.iter_content(chunk_size=65536),
-            status_code=response.status_code,
-            headers=download_headers,
-            media_type=content_type
-        )
-        # -----------------------------------------
-
+        response = await session.post(request.url, **request_kwargs, stream=True)
+        return await process_and_stream_response(response, request.url) # Sử dụng hàm trợ giúp
     except RequestsError as exc:
         raise HTTPException(status_code=502, detail=f"Lỗi khi yêu cầu đến URL mục tiêu: {exc}")
     except Exception as exc:
