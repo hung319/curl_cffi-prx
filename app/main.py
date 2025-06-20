@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, Dict
-from fastapi.responses import Response # <<< THAY ĐỔI: Import Response thay vì StreamingResponse
+from fastapi.responses import Response
 from curl_cffi.requests import AsyncSession, RequestsError
 
 
@@ -49,21 +49,14 @@ class PostRequest(BaseModel):
 
 @app.get("/", tags=["Health Check"])
 async def get_root_health_check():
-    # ... (giữ nguyên không thay đổi)
     uptime = datetime.now(timezone.utc) - start_time
     proxy_status = { "configured": bool(final_proxy_url), "details": f"Using proxy configured at {IP_SOCKS}" if final_proxy_url else "API is running in direct mode." }
     return { "status": "active", "server_time_utc": datetime.now(timezone.utc).isoformat(), "uptime_seconds": uptime.total_seconds(), "proxy": proxy_status }
 
-
-# --- THAY ĐỔI LỚN: Hàm trợ giúp giờ đây dùng Response thay vì StreamingResponse ---
 def create_passthrough_response(response, url):
     """Hàm trợ giúp để tạo response 'trong suốt'."""
     response.raise_for_status()
-
-    # 1. Lấy các headers gốc từ server mục tiêu
     original_headers = response.headers
-    
-    # 2. Chuẩn bị các headers để gửi về cho client
     proxy_response_headers = {
         "Content-Type": original_headers.get("Content-Type", "application/octet-stream")
     }
@@ -72,14 +65,11 @@ def create_passthrough_response(response, url):
         proxy_response_headers["Content-Disposition"] = original_content_disposition
     if "Content-Length" in original_headers:
         proxy_response_headers["Content-Length"] = original_headers["Content-Length"]
-
-    # 3. Trả về một Response tiêu chuẩn, với 'content' là toàn bộ nội dung file
     return Response(
-        content=response.content, # Dùng .content để lấy toàn bộ body dạng bytes
+        content=response.content,
         status_code=response.status_code,
         headers=proxy_response_headers
     )
-
 
 @app.get("/api", tags=["GET Method"])
 async def fetch_url_get_api(
@@ -90,7 +80,6 @@ async def fetch_url_get_api(
 ):
     if key != SECRET_KEY: raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
     if not url.startswith("http://") and not url.startswith("https://"): raise HTTPException(status_code=400, detail="URL không hợp lệ.")
-    
     headers = {}
     if custom_headers:
         try:
@@ -100,14 +89,11 @@ async def fetch_url_get_api(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Giá trị của custom_headers không phải là một chuỗi JSON hợp lệ.")
     if referer: headers["Referer"] = referer
-    
     request_kwargs = {"headers": headers}
     if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
-    
     try:
-        # --- THAY ĐỔI: Bỏ stream=True ---
         response = await session.get(url, **request_kwargs)
-        return create_passthrough_response(response, url) # Sử dụng hàm trợ giúp mới
+        return create_passthrough_response(response, url)
     except RequestsError as exc:
         raise HTTPException(status_code=502, detail=f"Lỗi khi yêu cầu đến URL mục tiêu: {exc}")
     except Exception as exc:
@@ -116,17 +102,17 @@ async def fetch_url_get_api(
 @app.post("/api", tags=["POST Method"])
 async def fetch_url_post_api(request: PostRequest):
     if request.key != SECRET_KEY: raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
-    
     headers = request.custom_headers or {}
     if request.referer: headers["Referer"] = request.referer
-    
     request_kwargs = {"headers": headers, "data": request.data}
-    if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
+    
+    # --- SỬA LỖI: Sửa lại tên biến bị gõ sai ---
+    if final_proxy_url: 
+        request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     
     try:
-        # --- THAY ĐỔI: Bỏ stream=True ---
         response = await session.post(request.url, **request_kwargs)
-        return create_passthrough_response(response, request.url) # Sử dụng hàm trợ giúp mới
+        return create_passthrough_response(response, request.url)
     except RequestsError as exc:
         raise HTTPException(status_code=502, detail=f"Lỗi khi yêu cầu đến URL mục tiêu: {exc}")
     except Exception as exc:
