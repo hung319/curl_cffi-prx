@@ -47,42 +47,42 @@ class PostRequest(BaseModel):
     custom_headers: Optional[Dict[str, str]] = None
     referer: Optional[str] = None
 
-@app.get("/", tags=["Health Check"])
-async def get_root_health_check():
-    uptime = datetime.now(timezone.utc) - start_time
-    proxy_status = { "configured": bool(final_proxy_url), "details": f"Using proxy configured at {IP_SOCKS}" if final_proxy_url else "API is running in direct mode." }
-    return { "status": "active", "server_time_utc": datetime.now(timezone.utc).isoformat(), "uptime_seconds": uptime.total_seconds(), "proxy": proxy_status }
+# --- THÊM MỚI: Hàm trợ giúp để xử lý stream một cách an toàn ---
+async def stream_generator(response):
+    """
+    Hàm này sẽ lặp qua các chunk dữ liệu từ response của curl_cffi một cách chính xác
+    và 'yield' (đưa ra) từng chunk.
+    """
+    async for chunk in response.iter_content(chunk_size=65536):
+        yield chunk
+# ----------------------------------------------------
 
 async def process_and_stream_response(response, url):
     """Hàm trợ giúp để xử lý và tạo response trả về."""
     response.raise_for_status()
-
-    # 1. Lấy các headers gốc từ server mục tiêu
     original_headers = response.headers
-    
-    # 2. Chuẩn bị các headers để gửi về cho client
-    # Bắt đầu với Content-Type, header quan trọng nhất để trình duyệt biết loại nội dung
     proxy_response_headers = {
         "Content-Type": original_headers.get("Content-Type", "application/octet-stream")
     }
-
-    # --- THAY ĐỔI LỚN: Logic "thông minh" ---
-    # 3. Kiểm tra xem server gốc có yêu cầu tải xuống không, nếu có thì sao chép hành vi đó
     original_content_disposition = original_headers.get("Content-Disposition")
     if original_content_disposition:
         proxy_response_headers["Content-Disposition"] = original_content_disposition
-    # Nếu không, chúng ta không làm gì cả, để trình duyệt tự quyết định (thường là hiển thị inline)
-    # ------------------------------------
-
-    # 4. Sao chép Content-Length nếu có, giúp trình duyệt biết tiến trình tải
     if "Content-Length" in original_headers:
         proxy_response_headers["Content-Length"] = original_headers["Content-Length"]
 
+    # --- THAY ĐỔI: Sử dụng hàm stream_generator mới ---
     return StreamingResponse(
-        response.iter_content(chunk_size=65536),
+        stream_generator(response), # Truyền vào hàm generator của chúng ta
         status_code=response.status_code,
         headers=proxy_response_headers
     )
+
+@app.get("/", tags=["Health Check"])
+async def get_root_health_check():
+    # ... (giữ nguyên không thay đổi)
+    uptime = datetime.now(timezone.utc) - start_time
+    proxy_status = { "configured": bool(final_proxy_url), "details": f"Using proxy configured at {IP_SOCKS}" if final_proxy_url else "API is running in direct mode." }
+    return { "status": "active", "server_time_utc": datetime.now(timezone.utc).isoformat(), "uptime_seconds": uptime.total_seconds(), "proxy": proxy_status }
 
 @app.get("/api", tags=["GET Method"])
 async def fetch_url_get_api(
@@ -93,7 +93,6 @@ async def fetch_url_get_api(
 ):
     if key != SECRET_KEY: raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
     if not url.startswith("http://") and not url.startswith("https://"): raise HTTPException(status_code=400, detail="URL không hợp lệ.")
-    
     headers = {}
     if custom_headers:
         try:
@@ -103,13 +102,11 @@ async def fetch_url_get_api(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Giá trị của custom_headers không phải là một chuỗi JSON hợp lệ.")
     if referer: headers["Referer"] = referer
-    
     request_kwargs = {"headers": headers}
     if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
-    
     try:
         response = await session.get(url, **request_kwargs, stream=True)
-        return await process_and_stream_response(response, url) # Sử dụng hàm trợ giúp
+        return await process_and_stream_response(response, url)
     except RequestsError as exc:
         raise HTTPException(status_code=502, detail=f"Lỗi khi yêu cầu đến URL mục tiêu: {exc}")
     except Exception as exc:
@@ -118,16 +115,13 @@ async def fetch_url_get_api(
 @app.post("/api", tags=["POST Method"])
 async def fetch_url_post_api(request: PostRequest):
     if request.key != SECRET_KEY: raise HTTPException(status_code=403, detail="API Key không hợp lệ hoặc bị thiếu.")
-    
     headers = request.custom_headers or {}
     if request.referer: headers["Referer"] = request.referer
-    
     request_kwargs = {"headers": headers, "data": request.data}
-    if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
-    
+    if final_proxy__url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     try:
         response = await session.post(request.url, **request_kwargs, stream=True)
-        return await process_and_stream_response(response, request.url) # Sử dụng hàm trợ giúp
+        return await process_and_stream_response(response, request.url)
     except RequestsError as exc:
         raise HTTPException(status_code=502, detail=f"Lỗi khi yêu cầu đến URL mục tiêu: {exc}")
     except Exception as exc:
