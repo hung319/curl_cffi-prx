@@ -11,8 +11,6 @@ from fastapi.responses import Response
 from curl_cffi.requests import AsyncSession, RequestsError
 
 
-# Các phần code phía trên không thay đổi
-# ...
 start_time = datetime.now(timezone.utc)
 SECRET_KEY = os.getenv("API_KEY")
 IP_SOCKS = os.getenv("IPSOCKS")
@@ -63,8 +61,10 @@ def create_passthrough_response(response, url):
     original_content_disposition = original_headers.get("Content-Disposition")
     if original_content_disposition:
         proxy_response_headers["Content-Disposition"] = original_content_disposition
-    if "Content-Length" in original_headers:
-        proxy_response_headers["Content-Length"] = original_headers["Content-Length"]
+    
+    # Bằng cách không sao chép Content-Length, chúng ta để FastAPI/Starlette tự tính toán
+    # dựa trên nội dung thực tế đã được giải nén (response.content)
+    
     return Response(
         content=response.content,
         status_code=response.status_code,
@@ -105,11 +105,7 @@ async def fetch_url_post_api(request: PostRequest):
     headers = request.custom_headers or {}
     if request.referer: headers["Referer"] = request.referer
     request_kwargs = {"headers": headers, "data": request.data}
-    
-    # --- SỬA LỖI: Sửa lại tên biến bị gõ sai ---
-    if final_proxy_url: 
-        request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
-    
+    if final_proxy_url: request_kwargs["proxies"] = {"http": final_proxy_url, "https": final_proxy_url}
     try:
         response = await session.post(request.url, **request_kwargs)
         return create_passthrough_response(response, request.url)
